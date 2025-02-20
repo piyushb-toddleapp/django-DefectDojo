@@ -23,7 +23,7 @@ class FluidAttacksParser(object):
 
     def get_findings(self, filename, test):
         if filename is None:
-            return ()
+            return []
 
         # Increase CSV field size limit
         maxInt = sys.maxsize
@@ -47,7 +47,7 @@ class FluidAttacksParser(object):
         for row in csvarray:
             finding = Finding(test=test)
 
-            # Extract title (remove the numeric prefix if present)
+            # Handle title
             title = row.get('title', '')
             if title:
                 title_parts = title.split('.')
@@ -59,19 +59,20 @@ class FluidAttacksParser(object):
             # Handle CWE
             cwe_str = row.get('cwe', '')
             if cwe_str:
-                # Extract first CWE number
                 cwe_match = re.search(r'CWE-(\d+)', cwe_str)
                 if cwe_match:
                     finding.cwe = int(cwe_match.group(1))
 
-            # Handle description and add snippet
+            # Handle description and snippet
             description = row.get('description', '')
             snippet = row.get('snippet', '')
+            if description is None:
+                description = ''
             if snippet:
                 description += f"\n\nCode Snippet:\n```\n{snippet}\n```"
             finding.description = description
 
-            # Handle CVSS vector and severity
+            # Handle CVSS
             cvss_vector = row.get('cvss', '')
             if cvss_vector:
                 vectors = cvss.parser.parse_cvss_from_text(cvss_vector)
@@ -81,19 +82,15 @@ class FluidAttacksParser(object):
                     vectors[0].compute_base_score()
                     finding.cvssv3_score = vectors[0].scores()[0]
                 else:
-                    finding.severity = "Medium"  # Default fallback
+                    finding.severity = "Medium"
             else:
-                finding.severity = "Medium"  # Default if no CVSS
+                finding.severity = "Medium"
 
             # Add references
-            references = row.get('finding', '')
-            if references:
-                finding.references = references
+            finding.references = row.get('finding', '')
 
             # Add file location
-            file_path = row.get('where', '')
-            if file_path:
-                finding.file_path = file_path
+            finding.file_path = row.get('where', '')
 
             # Add method information
             method = row.get('method', '')
@@ -101,27 +98,27 @@ class FluidAttacksParser(object):
                 finding.static_finding = True
                 finding.dynamic_finding = False
 
-            # Extract component information from description
-            if 'Use of' in description and 'at version' in description:
+            # Extract component information from description (safely)
+            if description and 'Use of' in description and 'at version' in description:
                 try:
                     comp_parts = description.split('Use of ')[1].split(' at version ')
                     finding.component_name = comp_parts[0]
                     finding.component_version = comp_parts[1].split(' ')[0]
                 except:
-                    pass
+                    finding.component_name = ''
+                    finding.component_version = ''
 
             # Handle unique findings
-            if finding is not None:
-                if finding.title is None:
-                    finding.title = ""
-                if finding.description is None:
-                    finding.description = ""
+            if finding.title is None:
+                finding.title = ""
+            if finding.description is None:
+                finding.description = ""
 
-                key = hashlib.sha256(
-                    (finding.title + '|' + finding.description).encode("utf-8")
-                ).hexdigest()
+            key = hashlib.sha256(
+                (finding.title + '|' + finding.description).encode("utf-8")
+            ).hexdigest()
 
-                if key not in dupes:
-                    dupes[key] = finding
+            if key not in dupes:
+                dupes[key] = finding
 
         return list(dupes.values())
