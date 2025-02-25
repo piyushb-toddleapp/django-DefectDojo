@@ -90,7 +90,15 @@ class FluidAttacksParser(object):
             finding.references = row.get('finding', '')
 
             # Add file location
-            finding.file_path = row.get('where', '')
+            finding.file_path = ""
+
+            description_column = row.get('description', '') or ''
+
+            # Use regex to find the file path after 'fluid-attacks-scanning-report/'
+            match = re.search(r'fluid-attacks-scanning-report/(.+)', description_column)
+
+            if match:
+                finding.file_path = match.group(1)  # Get the part after 'fluid-attacks-scanning-report/'
 
             # Add method information
             method = row.get('method', '')
