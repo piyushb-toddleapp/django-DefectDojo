@@ -43,6 +43,10 @@ class FluidAttacksParser(object):
         for row in reader:
             csvarray.append(row)
 
+        # Skip the last row (summary row)
+        if csvarray:
+            csvarray = csvarray[:-1]
+
         dupes = dict()
         for row in csvarray:
             finding = Finding(test=test)
