@@ -877,8 +877,63 @@ class FindingViewSet(
         if get_system_setting("enable_jira") and jira_project:
             push_to_jira = push_to_jira or jira_project.push_all_issues
 
-        serializer.save(push_to_jira=push_to_jira)
-
+        # Get original reviewers before update
+        original_reviewer_ids = set(reviewer.id for reviewer in serializer.instance.reviewers.all())
+        
+        # Save the instance
+        instance = serializer.save(push_to_jira=push_to_jira)
+        
+        # Check if reviewers were added by comparing before and after (using IDs instead of objects)
+        current_reviewer_ids = set(reviewer.id for reviewer in instance.reviewers.all())
+        new_reviewer_ids = current_reviewer_ids - original_reviewer_ids
+        
+        # If new reviewers were added, create notifications
+        if new_reviewer_ids:
+            from django.urls import reverse
+            from dojo.utils import create_notification
+            
+            user = self.request.user
+            
+            # Get simple string representations instead of complex objects
+            new_reviewer_usernames = []
+            for reviewer_id in new_reviewer_ids:
+                try:
+                    reviewer = User.objects.get(id=reviewer_id)
+                    new_reviewer_usernames.append(reviewer.username)
+                except User.DoesNotExist:
+                    continue
+            
+            if not new_reviewer_usernames:
+                return  # No valid reviewers to notify
+                
+            reviewers_string = ", ".join(new_reviewer_usernames)
+            
+            # Create a simple note without extra fields
+            from dojo.models import Notes, Note_Type
+            
+            general_note_type = Note_Type.objects.filter(is_active=True).first()
+            note_text = f"Review requested from {reviewers_string} via API by {user.get_full_name() or user.username}"
+            
+            new_note = Notes(
+                entry=note_text,
+                author=user,
+                note_type=general_note_type,
+            )
+            new_note.save()
+            instance.notes.add(new_note)
+            
+            # Use only simple types in create_notification
+            for username in new_reviewer_usernames:
+                # Call create_notification with minimal required parameters
+                create_notification(
+                    event="review_requested",
+                    title="Finding review requested",
+                    finding=instance.id,  # Use ID instead of object
+                    recipients=[username],
+                    description=f"API-initiated review request for finding '{instance.title}'",
+                    url=reverse("view_finding", args=(instance.id,)),
+                )
+            
     def get_queryset(self):
         findings = get_authorized_findings(
             Permissions.Finding_View,
