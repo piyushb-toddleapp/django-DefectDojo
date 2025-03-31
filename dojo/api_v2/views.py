@@ -883,7 +883,7 @@ class FindingViewSet(
         # Save the instance
         instance = serializer.save(push_to_jira=push_to_jira)
         
-        # Check if reviewers were added by comparing before and after (using IDs instead of objects)
+        # Check if reviewers were added by comparing before and after
         current_reviewer_ids = set(reviewer.id for reviewer in instance.reviewers.all())
         new_reviewer_ids = current_reviewer_ids - original_reviewer_ids
         
@@ -891,48 +891,55 @@ class FindingViewSet(
         if new_reviewer_ids:
             from django.urls import reverse
             from dojo.utils import create_notification
+            from django.contrib.auth.models import User
+            from django.utils import timezone
             
             user = self.request.user
             
-            # Get simple string representations instead of complex objects
-            new_reviewer_usernames = []
-            for reviewer_id in new_reviewer_ids:
-                try:
-                    reviewer = User.objects.get(id=reviewer_id)
-                    new_reviewer_usernames.append(reviewer.username)
-                except User.DoesNotExist:
-                    continue
+            # Get actual User objects for the reviewers - IMPORTANT for template display
+            new_reviewer_objects = list(User.objects.filter(id__in=new_reviewer_ids))
+            new_reviewer_usernames = [reviewer.username for reviewer in new_reviewer_objects]
             
             if not new_reviewer_usernames:
-                return  # No valid reviewers to notify
-                
-            reviewers_string = ", ".join(new_reviewer_usernames)
+                return
             
-            # Create a simple note without extra fields
+            # Create a note for the review request
             from dojo.models import Notes, Note_Type
             
-            general_note_type = Note_Type.objects.filter(is_active=True).first()
-            note_text = f"Review requested from {reviewers_string} via API by {user.get_full_name() or user.username}"
+            # Look for the "Review" note type first
+            review_note_type = Note_Type.objects.filter(name='Review').first()
+            if not review_note_type:
+                review_note_type = Note_Type.objects.filter(is_active=True).first()
+            
+            note_text = f"Requested review from {', '.join(new_reviewer_usernames)}"
             
             new_note = Notes(
                 entry=note_text,
                 author=user,
-                note_type=general_note_type,
+                note_type=review_note_type,
+                private=True,
             )
             new_note.save()
             instance.notes.add(new_note)
             
-            # Use only simple types in create_notification
-            for username in new_reviewer_usernames:
-                # Call create_notification with minimal required parameters
-                create_notification(
-                    event="review_requested",
-                    title="Finding review requested",
-                    finding=instance.id,  # Use ID instead of object
-                    recipients=[username],
-                    description=f"API-initiated review request for finding '{instance.title}'",
-                    url=reverse("view_finding", args=(instance.id,)),
-                )
+            # Set up some fields on the finding to match normal review requests
+            instance.under_review = True
+            instance.review_requested_by = user
+            instance.last_reviewed = timezone.now()
+            instance.save(push_to_jira=False)
+            
+            # Create notification with the parameters the template is expecting
+            create_notification(
+                event="review_requested",
+                title="Finding review requested",
+                finding=instance.title,                
+                requested_by=user.get_full_name() or user.username,  
+                note=new_note,                
+                reviewers=new_reviewer_objects,  # IMPORTANT: Pass actual User objects, not usernames
+                recipients=new_reviewer_usernames,
+                url=reverse("view_finding", args=(instance.id,)),
+                icon="check"
+            )
             
     def get_queryset(self):
         findings = get_authorized_findings(
