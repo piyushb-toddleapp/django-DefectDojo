@@ -110,6 +110,9 @@ class FluidAttacksParser(object):
                 finding.static_finding = True
                 finding.dynamic_finding = False
 
+            finding.component_name = ''
+            finding.component_version = ''
+            
             # Extract component information from description (safely)
             if description and 'Use of' in description and 'at version' in description:
                 try:
@@ -127,7 +130,7 @@ class FluidAttacksParser(object):
                 finding.description = ""
 
             key = hashlib.sha256(
-                (finding.title + '|' + finding.description).encode("utf-8")
+                (finding.title + '|' + str(finding.cwe) + '|' + finding.file_path + '|' + finding.component_name + '|' + finding.component_version).encode("utf-8")
             ).hexdigest()
 
             if key not in dupes:
